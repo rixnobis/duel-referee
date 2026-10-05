@@ -64,7 +64,7 @@ Three Redux interpreter behaviours the referee works around:
   referee reports the trap itself (ExcCode 8 or 9) without executing it.
   [grumpycoders/pcsx-redux#2224](https://github.com/grumpycoders/pcsx-redux/issues/2224).
 
-Both are fixed by [grumpycoders/pcsx-redux#2226](https://github.com/grumpycoders/pcsx-redux/pull/2226).
+The fix for both is [grumpycoders/pcsx-redux#2226](https://github.com/grumpycoders/pcsx-redux/pull/2226), open.
 The workarounds stay so the referee also runs on builds without it.
 
 Overflow only traps when Redux runs with `-debugger`, which `duel` always passes.
