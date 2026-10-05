@@ -59,8 +59,13 @@ Three Redux interpreter behaviours the referee works around:
 - `add`/`addi`/`sub` overflow in a branch delay slot sets Cause and EPC, but the
   pending branch overwrites the jump to the exception vector. The referee checks
   Cause on every instruction, so the trap is still reported.
+  [grumpycoders/pcsx-redux#2225](https://github.com/grumpycoders/pcsx-redux/issues/2225).
 - `syscall`/`break` in a taken branch's delay slot aborts the emulator. The
   referee reports the trap itself (ExcCode 8 or 9) without executing it.
+  [grumpycoders/pcsx-redux#2224](https://github.com/grumpycoders/pcsx-redux/issues/2224).
+
+Both are fixed by [grumpycoders/pcsx-redux#2226](https://github.com/grumpycoders/pcsx-redux/pull/2226).
+The workarounds stay so the referee also runs on builds without it.
 
 Overflow only traps when Redux runs with `-debugger`, which `duel` always passes.
 
