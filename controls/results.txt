@@ -1,0 +1,114 @@
+duel-referee controls, 2026-10-05T18:26:50Z
+redux: 976439000 Merge pull request #2216 from rixnobis/appimage-noble
+bios:  openbios.bin, sha256 713ea2aed5860628
+
+== 1. positive control: addiu v0, a0, 1
+$ ./duel run controls/src/positive.s 0 1 7fffffff 80000000 ffffffff
+{"input": "00000000", "verdict": "OK", "v0": "00000001", "instructions": 2}
+{"input": "00000001", "verdict": "OK", "v0": "00000002", "instructions": 2}
+{"input": "7fffffff", "verdict": "OK", "v0": "80000000", "instructions": 2}
+{"input": "80000000", "verdict": "OK", "v0": "80000001", "instructions": 2}
+{"input": "ffffffff", "verdict": "OK", "v0": "00000000", "instructions": 2}
+exit 0
+
+== 2. must-trip: lw refused with MEMACCESS (both gates, then each gate alone)
+$ ./duel run controls/src/memaccess.s 0 1f800000 1f801070 bfc00000 fffe0130 60000000 a0100000
+{"input": "00000000", "verdict": "MEMACCESS", "address": "00000000", "detected_by": "decoder+breakpoint", "instructions": 1}
+{"input": "1f800000", "verdict": "MEMACCESS", "address": "1f800000", "detected_by": "decoder+breakpoint", "instructions": 1}
+{"input": "1f801070", "verdict": "MEMACCESS", "address": "1f801070", "detected_by": "decoder+breakpoint", "instructions": 1}
+{"input": "bfc00000", "verdict": "MEMACCESS", "address": "bfc00000", "detected_by": "decoder+breakpoint", "instructions": 1}
+{"input": "fffe0130", "verdict": "MEMACCESS", "address": "fffe0130", "detected_by": "decoder+breakpoint", "instructions": 1}
+{"input": "60000000", "verdict": "MEMACCESS", "address": "60000000", "detected_by": "decoder+breakpoint", "instructions": 1}
+{"input": "a0100000", "verdict": "MEMACCESS", "address": "a0100000", "detected_by": "decoder+breakpoint", "instructions": 1}
+exit 0
+
+$ env DUEL_DECODER=0 ./duel run controls/src/memaccess.s 0 1f800000 1f801070 bfc00000 fffe0130 60000000 a0100000
+{"input": "00000000", "verdict": "MEMACCESS", "address": "00000000", "detected_by": "breakpoint", "instructions": 1}
+{"input": "1f800000", "verdict": "MEMACCESS", "address": "1f800000", "detected_by": "breakpoint", "instructions": 1}
+{"input": "1f801070", "verdict": "MEMACCESS", "address": "1f801070", "detected_by": "breakpoint", "instructions": 1}
+{"input": "bfc00000", "verdict": "MEMACCESS", "address": "bfc00000", "detected_by": "breakpoint", "instructions": 1}
+{"input": "fffe0130", "verdict": "MEMACCESS", "address": "fffe0130", "detected_by": "breakpoint", "instructions": 1}
+{"input": "60000000", "verdict": "MEMACCESS", "address": "60000000", "detected_by": "breakpoint", "instructions": 1}
+{"input": "a0100000", "verdict": "MEMACCESS", "address": "a0100000", "detected_by": "breakpoint", "instructions": 1}
+exit 0
+
+$ ./duel run controls/src/store.s 0
+{"input": "00000000", "verdict": "MEMACCESS", "address": "00000100", "detected_by": "decoder+breakpoint", "instructions": 1}
+exit 0
+
+$ env DUEL_DECODER=0 ./duel run controls/src/store.s 0
+{"input": "00000000", "verdict": "MEMACCESS", "address": "00000100", "detected_by": "breakpoint", "instructions": 1}
+exit 0
+
+$ ./duel run controls/src/load-delay-slot.s 1f801070
+{"input": "1f801070", "verdict": "MEMACCESS", "address": "1f801070", "detected_by": "decoder+breakpoint", "instructions": 2}
+exit 0
+
+== 3. TRAP: add overflow on 0x7fffffff (plain, and in a delay slot), syscall in a delay slot
+$ ./duel run controls/src/trap.s 7fffffff 1 80000000
+{"input": "7fffffff", "verdict": "TRAP", "excode": 12, "exception": "Ov", "epc": "a0100000", "instructions": 1}
+{"input": "00000001", "verdict": "OK", "v0": "00000002", "instructions": 3}
+{"input": "80000000", "verdict": "TRAP", "excode": 12, "exception": "Ov", "epc": "a0100000", "instructions": 1}
+exit 0
+
+$ ./duel run controls/src/trap-delay-slot.s 7fffffff 1 80000000
+{"input": "7fffffff", "verdict": "TRAP", "excode": 12, "exception": "Ov", "epc": "a0100000", "instructions": 2}
+{"input": "00000001", "verdict": "OK", "v0": "00000002", "instructions": 2}
+{"input": "80000000", "verdict": "TRAP", "excode": 12, "exception": "Ov", "epc": "a0100000", "instructions": 2}
+exit 0
+
+$ ./duel run controls/src/syscall-delay-slot.s 0
+{"input": "00000000", "verdict": "TRAP", "excode": 8, "exception": "Syscall", "epc": "a0100000", "instructions": 2}
+exit 0
+
+== 4. TIMEOUT: infinite loop
+$ ./duel run controls/src/timeout.s 0 1
+{"input": "00000000", "verdict": "TIMEOUT", "instructions": 10001}
+{"input": "00000001", "verdict": "TIMEOUT", "instructions": 10001}
+exit 0
+
+== 5. other verdicts and the length limit
+$ ./duel run controls/src/escape.s 0 60000000 a0100010
+{"input": "00000000", "verdict": "ESCAPE", "pc": "00000000", "instructions": 2}
+{"input": "60000000", "verdict": "ESCAPE", "pc": "60000000", "instructions": 2}
+{"input": "a0100010", "verdict": "ESCAPE", "pc": "a0100080", "instructions": 30}
+exit 0
+
+$ ./duel run controls/src/toolong.s 0
+duel: controls/src/toolong.s: 34 words, the limit is 32 (delay slots included)
+exit 2
+
+== 6. query, check (pass, fail), log
+$ ./duel set controls/src/popcount.s
+secret installed: 7 words, sha256 2cbf2028ac691043
+exit 0
+
+$ ./duel query alice 0
+00000000 -> OK v0=00000000   [alice: 1 queries]
+exit 0
+
+$ ./duel query alice ffffffff
+ffffffff -> OK v0=00000020   [alice: 2 queries]
+exit 0
+
+$ ./duel check alice controls/src/popcount-alt.s
+PASS on 10005 inputs   [alice: 3 queries]
+exit 0
+
+$ ./duel check alice controls/src/popcount-wrong.s
+FAIL on 80000000: original OK v0=00000001, candidate TIMEOUT   [alice: 4 queries]
+exit 0
+
+$ ./duel check alice controls/src/toolong.s
+duel: controls/src/toolong.s: 34 words, the limit is 32 (delay slots included)
+exit 2
+
+$ ./duel score alice
+alice: 4
+exit 0
+
+$ cat state/alice.jsonl
+{"ts": "2026-10-05T18:27:04+00:00", "player": "alice", "kind": "query", "input": "00000000", "output": "OK v0=00000000"}
+{"ts": "2026-10-05T18:27:05+00:00", "player": "alice", "kind": "query", "input": "ffffffff", "output": "OK v0=00000020"}
+{"ts": "2026-10-05T18:27:08+00:00", "player": "alice", "kind": "check", "candidate_sha256": "9266abec753e1f20fed371bf6dc4369371fef3c5b1d73c46fef35bb8efa4f6e0", "words": 6, "seed": 13156474732875468371, "inputs": 10005, "result": "pass"}
+{"ts": "2026-10-05T18:27:41+00:00", "player": "alice", "kind": "check", "candidate_sha256": "7309c5c8b0f2ba8b3b8a0e58490a76d23240978181a6a44154cd610665daf0b6", "words": 7, "seed": 10681719282307648398, "inputs": 10005, "result": "fail", "input": "80000000", "original": "OK v0=00000001", "candidate": "TIMEOUT"}

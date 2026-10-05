@@ -1,0 +1,3 @@
+loop:
+    b       loop
+    nop

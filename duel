@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""duel: referee CLI for the MIPS function-reconstruction game.
+
+  duel set <secret.s|secret.bin>        install the setter's function (no query cost)
+  duel query <player> <hex input>       run the secret on one input (costs 1 query)
+  duel check <player> <cand.s|cand.bin> compare a candidate against the secret (costs 1 query)
+  duel score [player]                   query counts from the logs
+  duel run <file> <hex input>...        run any function, no log, no cost (for testing)
+
+Environment:
+  DUEL_REDUX  path to a pcsx-redux binary   (default: pcsx-redux on PATH)
+  DUEL_BIOS   path to openbios.bin          (required)
+  DUEL_STATE  state directory               (default: ./state)
+  DUEL_AS / DUEL_OBJCOPY  MIPS binutils     (default: mipsel-none-elf-as / -objcopy)
+"""
+
+import datetime
+import hashlib
+import json
+import os
+import random
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+MAX_WORDS = 32
+RANDOM_INPUTS = 10000
+EDGE_INPUTS = [0x00000000, 0x00000001, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF]
+EXCODES = {
+    0: "Int", 4: "AdEL", 5: "AdES", 6: "IBE", 7: "DBE", 8: "Syscall", 9: "Break",
+    10: "RI", 11: "CpU", 12: "Ov",
+}
+
+
+def die(msg, code=2):
+    print("duel: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def state_dir():
+    d = os.environ.get("DUEL_STATE", os.path.join(os.getcwd(), "state"))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def assemble(path):
+    """Return the function as a list of little-endian words."""
+    if path.endswith(".bin"):
+        data = open(path, "rb").read()
+        if len(data) % 4:
+            die("%s: size %d is not a multiple of 4" % (path, len(data)))
+    else:
+        asm = os.environ.get("DUEL_AS", "mipsel-none-elf-as")
+        objcopy = os.environ.get("DUEL_OBJCOPY", "mipsel-none-elf-objcopy")
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "f.s")
+            obj = os.path.join(tmp, "f.o")
+            raw = os.path.join(tmp, "f.bin")
+            # noreorder: delay slots are exactly what was written; noat: no hidden $at use
+            with open(src, "w") as f:
+                f.write(".set noreorder\n.set noat\n.text\n")
+                f.write(open(path).read())
+                f.write("\n")
+            r = subprocess.run([asm, "-EL", "-march=r3000", "-mabi=32", "-no-mips16", "-o", obj, src],
+                               capture_output=True, text=True)
+            if r.returncode:
+                die("assembler failed:\n" + r.stderr)
+            r = subprocess.run([objcopy, "-O", "binary", "-j", ".text", obj, raw], capture_output=True, text=True)
+            if r.returncode:
+                die("objcopy failed:\n" + r.stderr)
+            data = open(raw, "rb").read()
+    words = list(struct.unpack("<%dI" % (len(data) // 4), data))
+    # The code region is zero-filled, so trailing zero words (section padding, or a final
+    # nop in the delay slot of the last jr) change nothing and are not counted.
+    while words and words[-1] == 0:
+        words.pop()
+    if not words:
+        die("%s: empty function" % path)
+    if len(words) > MAX_WORDS:
+        die("%s: %d words, the limit is %d (delay slots included)" % (path, len(words), MAX_WORDS))
+    return words
+
+
+def run_redux(phases):
+    redux = os.environ.get("DUEL_REDUX") or shutil.which("pcsx-redux")
+    bios = os.environ.get("DUEL_BIOS")
+    if not redux or not os.path.exists(redux):
+        die("set DUEL_REDUX to a pcsx-redux binary")
+    if not bios or not os.path.exists(bios):
+        die("set DUEL_BIOS to openbios.bin")
+    with tempfile.TemporaryDirectory() as tmp:
+        job = os.path.join(tmp, "job.lua")
+        out = os.path.join(tmp, "out.txt")
+        with open(job, "w") as f:
+            f.write("return { phases = {\n")
+            for ph in phases:
+                f.write("{ code = {%s},\n" % ",".join("0x%08x" % w for w in ph["code"]))
+                f.write("inputs = {%s} },\n" % ",".join("0x%08x" % i for i in ph["inputs"]))
+            f.write("} }\n")
+        env = dict(os.environ, DUEL_JOB=job, DUEL_OUT=out)
+        cmd = [redux, "-no-ui", "-testmode", "-interpreter", "-debugger", "-run", "-bios", bios,
+               "-dofile", os.path.join(HERE, "referee.lua")]
+        r = subprocess.run(cmd, env=env, cwd=tmp, capture_output=True, text=True, timeout=3600)
+        if not os.path.exists(out):
+            die("redux produced no result (exit %d)\n%s%s" % (r.returncode, r.stdout[-2000:], r.stderr[-2000:]))
+        lines = open(out).read().splitlines()
+    if not lines or lines[-1].split()[0] != "DONE":
+        die("redux result incomplete (exit %d):\n%s" % (r.returncode, "\n".join(lines[-5:])))
+    expected = sum(len(ph["inputs"]) for ph in phases)
+    if int(lines[-1].split()[1]) != expected:
+        die("redux ran %s runs, expected %d" % (lines[-1].split()[1], expected))
+    results = [[] for _ in phases]
+    for line in lines[:-1]:
+        f = line.split()
+        results[int(f[0]) - 1].append(parse(f[2:]))
+    return results
+
+
+def parse(f):
+    inp = int(f[0], 16)
+    kind = f[1]
+    o = {"input": "%08x" % inp, "verdict": kind}
+    if kind == "OK":
+        o["v0"] = f[2]
+        o["instructions"] = int(f[3])
+    elif kind == "TRAP":
+        o["excode"] = int(f[2])
+        o["exception"] = EXCODES.get(int(f[2]), "?")
+        o["epc"] = f[3]
+        o["instructions"] = int(f[4])
+    elif kind == "MEMACCESS":
+        o["address"] = f[2]
+        o["detected_by"] = f[3]
+        o["instructions"] = int(f[4])
+    elif kind == "TIMEOUT":
+        o["instructions"] = int(f[2])
+    elif kind == "ESCAPE":
+        o["pc"] = f[2]
+        o["instructions"] = int(f[3])
+    return o
+
+
+def observable(o):
+    """What the solver gets to see, and what a candidate must reproduce."""
+    v = o["verdict"]
+    if v == "OK":
+        return "OK v0=%s" % o["v0"]
+    if v == "TRAP":
+        return "TRAP %s (excode %d)" % (o["exception"], o["excode"])
+    if v == "MEMACCESS":
+        return "MEMACCESS %s" % o["address"]
+    if v == "ESCAPE":
+        return "ESCAPE pc=%s" % o["pc"]
+    return v
+
+
+def secret():
+    p = os.path.join(state_dir(), "secret.bin")
+    if not os.path.exists(p):
+        die("no secret installed, run: duel set <file>")
+    data = open(p, "rb").read()
+    return list(struct.unpack("<%dI" % (len(data) // 4), data))
+
+
+def log(player, entry):
+    if not player.replace("-", "").replace("_", "").isalnum():
+        die("player names are letters, digits, - and _")
+    entry = dict({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                  "player": player}, **entry)
+    with open(os.path.join(state_dir(), "%s.jsonl" % player), "a") as f:
+        f.write(json.dumps(entry) + "\n")
+    return count(player)
+
+
+def count(player):
+    p = os.path.join(state_dir(), "%s.jsonl" % player)
+    if not os.path.exists(p):
+        return 0
+    return sum(1 for line in open(p) if line.strip())
+
+
+def parse_hex(s):
+    try:
+        v = int(s, 16)
+    except ValueError:
+        die("not a hex number: %s" % s)
+    if not 0 <= v <= 0xFFFFFFFF:
+        die("input out of 32-bit range: %s" % s)
+    return v
+
+
+def cmd_set(args):
+    if len(args) != 1:
+        die("usage: duel set <file>")
+    words = assemble(args[0])
+    with open(os.path.join(state_dir(), "secret.bin"), "wb") as f:
+        f.write(struct.pack("<%dI" % len(words), *words))
+    print("secret installed: %d words, sha256 %s" % (len(words), hashlib.sha256(struct.pack(
+        "<%dI" % len(words), *words)).hexdigest()[:16]))
+
+
+def cmd_query(args):
+    if len(args) != 2:
+        die("usage: duel query <player> <hex input>")
+    player, inp = args[0], parse_hex(args[1])
+    o = run_redux([{"code": secret(), "inputs": [inp]}])[0][0]
+    n = log(player, {"kind": "query", "input": o["input"], "output": observable(o)})
+    print("%08x -> %s   [%s: %d queries]" % (inp, observable(o), player, n))
+
+
+def cmd_check(args):
+    if len(args) != 2:
+        die("usage: duel check <player> <candidate.s|.bin>")
+    player = args[0]
+    cand = assemble(args[1])  # rejected submissions cost nothing
+    seed = int.from_bytes(os.urandom(8), "little")
+    rng = random.Random(seed)
+    inputs = EDGE_INPUTS + [rng.getrandbits(32) for _ in range(RANDOM_INPUTS)]
+    orig_r, cand_r = run_redux([{"code": secret(), "inputs": inputs}, {"code": cand, "inputs": inputs}])
+    mismatch = None
+    for a, b in zip(orig_r, cand_r):
+        if observable(a) != observable(b):
+            mismatch = (a, b)
+            break
+    entry = {"kind": "check", "candidate_sha256": hashlib.sha256(
+        struct.pack("<%dI" % len(cand), *cand)).hexdigest(), "words": len(cand), "seed": seed,
+        "inputs": len(inputs), "result": "pass" if mismatch is None else "fail"}
+    if mismatch:
+        entry["input"] = mismatch[0]["input"]
+        entry["original"] = observable(mismatch[0])
+        entry["candidate"] = observable(mismatch[1])
+    n = log(player, entry)
+    if mismatch:
+        print("FAIL on %s: original %s, candidate %s   [%s: %d queries]" % (
+            entry["input"], entry["original"], entry["candidate"], player, n))
+    else:
+        print("PASS on %d inputs   [%s: %d queries]" % (len(inputs), player, n))
+
+
+def cmd_score(args):
+    d = state_dir()
+    players = args or sorted(f[:-6] for f in os.listdir(d) if f.endswith(".jsonl"))
+    for p in players:
+        print("%s: %d" % (p, count(p)))
+
+
+def cmd_run(args):
+    if len(args) < 2:
+        die("usage: duel run <file> <hex input>...")
+    words = assemble(args[0])
+    for o in run_redux([{"code": words, "inputs": [parse_hex(a) for a in args[1:]]}])[0]:
+        print(json.dumps(o))
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+        print(__doc__)
+        return
+    cmds = {"set": cmd_set, "query": cmd_query, "check": cmd_check, "score": cmd_score, "run": cmd_run}
+    if sys.argv[1] not in cmds:
+        die("unknown command %s" % sys.argv[1])
+    cmds[sys.argv[1]](sys.argv[2:])
+
+
+if __name__ == "__main__":
+    main()
