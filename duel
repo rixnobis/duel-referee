@@ -35,9 +35,12 @@ EXCODES = {
 }
 
 
-def die(msg, code=2):
-    print("duel: " + msg, file=sys.stderr)
-    sys.exit(code)
+class DuelError(Exception):
+    pass
+
+
+def die(msg):
+    raise DuelError(msg)
 
 
 def state_dir():
@@ -158,6 +161,8 @@ def observable(o):
 
 
 def secret():
+    if os.environ.get("DUEL_SECRET"):
+        return assemble(os.environ["DUEL_SECRET"])
     p = os.path.join(state_dir(), "secret.bin")
     if not os.path.exists(p):
         die("no secret installed, run: duel set <file>")
@@ -202,20 +207,32 @@ def cmd_set(args):
         "<%dI" % len(words), *words)).hexdigest()[:16]))
 
 
+def do_query(player, inp):
+    o = run_redux([{"code": secret(), "inputs": [inp]}])[0][0]
+    n = log(player, {"kind": "query", "input": o["input"], "output": observable(o)})
+    return {"input": o["input"], "output": observable(o), "queries": n}
+
+
 def cmd_query(args):
     if len(args) != 2:
         die("usage: duel query <player> <hex input>")
-    player, inp = args[0], parse_hex(args[1])
-    o = run_redux([{"code": secret(), "inputs": [inp]}])[0][0]
-    n = log(player, {"kind": "query", "input": o["input"], "output": observable(o)})
-    print("%08x -> %s   [%s: %d queries]" % (inp, observable(o), player, n))
+    r = do_query(args[0], parse_hex(args[1]))
+    print("%s -> %s   [%s: %d queries]" % (r["input"], r["output"], args[0], r["queries"]))
 
 
 def cmd_check(args):
     if len(args) != 2:
         die("usage: duel check <player> <candidate.s|.bin>")
     player = args[0]
-    cand = assemble(args[1])  # rejected submissions cost nothing
+    entry = do_check(player, assemble(args[1]))  # rejected submissions cost nothing
+    if entry["result"] == "fail":
+        print("FAIL on %s: original %s, candidate %s   [%s: %d queries]" % (
+            entry["input"], entry["original"], entry["candidate"], player, entry["queries"]))
+    else:
+        print("PASS on %d inputs   [%s: %d queries]" % (entry["inputs"], player, entry["queries"]))
+
+
+def do_check(player, cand):
     seed = int.from_bytes(os.urandom(8), "little")
     rng = random.Random(seed)
     inputs = EDGE_INPUTS + [rng.getrandbits(32) for _ in range(RANDOM_INPUTS)]
@@ -232,12 +249,8 @@ def cmd_check(args):
         entry["input"] = mismatch[0]["input"]
         entry["original"] = observable(mismatch[0])
         entry["candidate"] = observable(mismatch[1])
-    n = log(player, entry)
-    if mismatch:
-        print("FAIL on %s: original %s, candidate %s   [%s: %d queries]" % (
-            entry["input"], entry["original"], entry["candidate"], player, n))
-    else:
-        print("PASS on %d inputs   [%s: %d queries]" % (len(inputs), player, n))
+    entry["queries"] = log(player, entry)
+    return entry
 
 
 def cmd_score(args):
@@ -260,9 +273,13 @@ def main():
         print(__doc__)
         return
     cmds = {"set": cmd_set, "query": cmd_query, "check": cmd_check, "score": cmd_score, "run": cmd_run}
-    if sys.argv[1] not in cmds:
-        die("unknown command %s" % sys.argv[1])
-    cmds[sys.argv[1]](sys.argv[2:])
+    try:
+        if sys.argv[1] not in cmds:
+            die("unknown command %s" % sys.argv[1])
+        cmds[sys.argv[1]](sys.argv[2:])
+    except DuelError as e:
+        print("duel: %s" % e, file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

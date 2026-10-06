@@ -41,6 +41,32 @@ export DUEL_REDUX=/path/to/pcsx-redux DUEL_BIOS=/path/to/openbios.bin
 prepended, so delay slots are exactly what was written and no macro sneaks in a
 hidden `$at`. `.bin` files are raw little-endian words.
 
+## Hosting a round
+
+The setter runs the referee as a container, with the function mounted in at run time:
+
+```
+docker build -t duel-referee .
+printf 'alice <token>\n' > tokens          # one "<player> <token>" line per solver
+docker run -d -p 8080:8080 \
+    -v $PWD/secret.s:/secret/secret.s:ro -v $PWD/tokens:/config/tokens:ro \
+    -v $PWD/state:/state duel-referee
+```
+
+Solvers then call it with `Authorization: Bearer <token>`:
+
+```
+curl -X POST -H "Authorization: Bearer $T" -d '{"input": "7fffffff"}' http://host:8080/query
+curl -X POST -H "Authorization: Bearer $T" -d '{"source": "jr $ra\n addiu $v0, $a0, 1"}' http://host:8080/check
+curl -H "Authorization: Bearer $T" http://host:8080/score
+curl -H "Authorization: Bearer $T" http://host:8080/log
+```
+
+`/check` also takes `{"bin": "<hex bytes>"}`. The logs in `state/` are the scoreboard. The image
+pins nothing by default and takes the Redux dev build current at build time; its sha256 is in
+`/opt/redux.sha256`, and `--build-arg REDUX_URL=...` pins a specific one.
+`controls/run-api-controls.sh` replays the controls through the API into `controls/api-results.txt`.
+
 ## How it works
 
 `referee.lua` runs inside PCSX-Redux (`-interpreter -debugger -testmode -no-ui`).

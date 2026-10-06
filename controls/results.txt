@@ -1,5 +1,5 @@
-duel-referee controls, 2026-10-05T18:26:50Z
-redux: 976439000 Merge pull request #2216 from rixnobis/appimage-noble
+duel-referee controls, 2026-10-06T01:15:29Z
+redux: d9d0db036 interpreter: cancel the pending branch on any exception in its delay slot
 bios:  openbios.bin, sha256 713ea2aed5860628
 
 == 1. positive control: addiu v0, a0, 1
@@ -108,7 +108,7 @@ alice: 4
 exit 0
 
 $ cat state/alice.jsonl
-{"ts": "2026-10-05T18:27:04+00:00", "player": "alice", "kind": "query", "input": "00000000", "output": "OK v0=00000000"}
-{"ts": "2026-10-05T18:27:05+00:00", "player": "alice", "kind": "query", "input": "ffffffff", "output": "OK v0=00000020"}
-{"ts": "2026-10-05T18:27:08+00:00", "player": "alice", "kind": "check", "candidate_sha256": "9266abec753e1f20fed371bf6dc4369371fef3c5b1d73c46fef35bb8efa4f6e0", "words": 6, "seed": 13156474732875468371, "inputs": 10005, "result": "pass"}
-{"ts": "2026-10-05T18:27:41+00:00", "player": "alice", "kind": "check", "candidate_sha256": "7309c5c8b0f2ba8b3b8a0e58490a76d23240978181a6a44154cd610665daf0b6", "words": 7, "seed": 10681719282307648398, "inputs": 10005, "result": "fail", "input": "80000000", "original": "OK v0=00000001", "candidate": "TIMEOUT"}
+{"ts": "2026-10-06T01:15:42+00:00", "player": "alice", "kind": "query", "input": "00000000", "output": "OK v0=00000000"}
+{"ts": "2026-10-06T01:15:43+00:00", "player": "alice", "kind": "query", "input": "ffffffff", "output": "OK v0=00000020"}
+{"ts": "2026-10-06T01:15:47+00:00", "player": "alice", "kind": "check", "candidate_sha256": "9266abec753e1f20fed371bf6dc4369371fef3c5b1d73c46fef35bb8efa4f6e0", "words": 6, "seed": 2796671131997912804, "inputs": 10005, "result": "pass"}
+{"ts": "2026-10-06T01:16:19+00:00", "player": "alice", "kind": "check", "candidate_sha256": "7309c5c8b0f2ba8b3b8a0e58490a76d23240978181a6a44154cd610665daf0b6", "words": 7, "seed": 18439555775451088372, "inputs": 10005, "result": "fail", "input": "80000000", "original": "OK v0=00000001", "candidate": "TIMEOUT"}

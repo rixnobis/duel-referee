@@ -1,0 +1,51 @@
+duel-referee API controls, 2026-10-06T01:13:39Z
+image: sha256:eb4df90a3f1a5e90872766e7d432f4932e61f639e3fab483900a21fef6981357
+redux: 27a9927a9db34bcb808fd89a0e94933f9cccf30da21f4b74ac8a58403ef344d4  PCSX-Redux-HEAD-x86_64.AppImage
+
+== 1. positive control: secret addiu v0, a0, 1
+$ POST /query 0  (token-alice)
+{"input": "00000000", "output": "OK v0=00000001", "queries": 1}
+$ POST /query 1  (token-alice)
+{"input": "00000001", "output": "OK v0=00000002", "queries": 2}
+$ POST /query 7fffffff  (token-alice)
+{"input": "7fffffff", "output": "OK v0=80000000", "queries": 3}
+$ POST /query 80000000  (token-alice)
+{"input": "80000000", "output": "OK v0=80000001", "queries": 4}
+$ POST /query ffffffff  (token-alice)
+{"input": "ffffffff", "output": "OK v0=00000000", "queries": 5}
+== 2. must-trip: secret lw v0, 0(a0)
+$ POST /query 0  (token-alice)
+{"input": "00000000", "output": "MEMACCESS 00000000", "queries": 1}
+$ POST /query 1f800000  (token-alice)
+{"input": "1f800000", "output": "MEMACCESS 1f800000", "queries": 2}
+$ POST /query 1f801070  (token-alice)
+{"input": "1f801070", "output": "MEMACCESS 1f801070", "queries": 3}
+$ POST /query bfc00000  (token-alice)
+{"input": "bfc00000", "output": "MEMACCESS bfc00000", "queries": 4}
+$ POST /query 60000000  (token-alice)
+{"input": "60000000", "output": "MEMACCESS 60000000", "queries": 5}
+== 3. TRAP: secret add v0, a0, a0
+$ POST /query 7fffffff  (token-alice)
+{"input": "7fffffff", "output": "TRAP Ov (excode 12)", "queries": 1}
+$ POST /query 1  (token-alice)
+{"input": "00000001", "output": "OK v0=00000002", "queries": 2}
+== 4. TIMEOUT: secret b . / nop
+$ POST /query 0  (token-alice)
+{"input": "00000000", "output": "TIMEOUT", "queries": 1}
+== 5. check, log and auth: secret popcount
+$ POST /query ffffffff  (token-alice)
+{"input": "ffffffff", "output": "OK v0=00000020", "queries": 1}
+$ POST /check popcount-alt
+{"kind": "check", "candidate_sha256": "9266abec753e1f20fed371bf6dc4369371fef3c5b1d73c46fef35bb8efa4f6e0", "words": 6, "seed": 17125188482820681015, "inputs": 10005, "result": "pass", "queries": 2}
+$ POST /check popcount-wrong
+{"kind": "check", "candidate_sha256": "7309c5c8b0f2ba8b3b8a0e58490a76d23240978181a6a44154cd610665daf0b6", "words": 7, "seed": 4504998908916449774, "inputs": 10005, "result": "fail", "input": "80000000", "original": "OK v0=00000001", "candidate": "TIMEOUT", "queries": 3}
+$ POST /check toolong
+{"error": "/tmp/tmpwvyh70ed/candidate.s: 34 words, the limit is 32 (delay slots included)"}
+$ POST /query 1  (token-bob)
+{"input": "00000001", "output": "OK v0=00000001", "queries": 1}
+$ POST /query 0  (token-nobody)
+{"error": "unknown token"}
+$ GET /score
+{"alice": 3, "bob": 1}
+$ GET /log  (token-alice)
+[{"ts": "2026-10-06T01:14:39+00:00", "player": "alice", "kind": "query", "input": "ffffffff", "output": "OK v0=00000020"}, {"ts": "2026-10-06T01:14:41+00:00", "player": "alice", "kind": "check", "candidate_sha256": "9266abec753e1f20fed371bf6dc4369371fef3c5b1d73c46fef35bb8efa4f6e0", "words": 6, "seed": 17125188482820681015, "inputs": 10005, "result": "pass"}, {"ts": "2026-10-06T01:15:16+00:00", "player": "alice", "kind": "check", "candidate_sha256": "7309c5c8b0f2ba8b3b8a0e58490a76d23240978181a6a44154cd610665daf0b6", "words": 7, "seed": 4504998908916449774, "inputs": 10005, "result": "fail", "input": "80000000", "original": "OK v0=00000001", "candidate": "TIMEOUT"}]
